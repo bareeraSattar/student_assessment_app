@@ -1,0 +1,71 @@
+name: e_app
+description: "University Evaluation System - Flutter App"
+publish_to: 'none'  # Prevents accidental publishing
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Core networking & JSON
+  http: ^1.2.2
+
+  # State management
+  provider: ^6.1.2
+
+  # Storage (tokens, user data)
+  shared_preferences: ^2.5.4
+  flutter_secure_storage: ^9.2.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  connectivity_plus: ^6.0.5
+
+  # Date formatting
+  intl: ^0.20.2
+
+  # Beautiful fonts
+  google_fonts: ^7.0.2
+
+  # Nice loading indicators (used in your screens)
+  flutter_spinkit: ^5.2.1
+
+  # Cupertino icons (for iOS-style if needed)
+  cupertino_icons: ^1.0.8
+  fl_chart: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0  # Recommended lints
+
+  # Optional: Generate app icons easily
+  # flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+
+  # Assets declaration - this is the correct place
+  assets:
+    - assets/uni_logo.jpeg
+    # You can add more later, e.g.:
+    # - assets/images/
+    # - assets/icons/
+
+  # Custom fonts (uncomment & configure when you add font files)
+  # fonts:
+  #   - family: Poppins
+  #     fonts:
+  #       - asset: fonts/Poppins-Regular.ttf
+  #       - asset: fonts/Poppins-Bold.ttf
+  #         weight: 700
+
+# Optional: For generating app icons
+# flutter_launcher_icons:
+#   android: true
+#   ios: true
+#   image_path: "assets/icon/icon.png"
