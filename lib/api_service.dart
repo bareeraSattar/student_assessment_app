@@ -167,44 +167,49 @@ class ApiService {
   // ──────────────────────────────────────────────
 
   static Future<List<Assessment>> getAssessments({
-    int? subjectId,
-    int? studentId,
-    bool latestOnly = false,
-  }) async {
-    final online = await _isOnline();
+  int? subjectId,
+  int? studentId,
+  bool latestOnly = false,
+}) async {
+  final online = await _isOnline();
 
-    String cacheKey = 'assessments';
-    if (subjectId != null) cacheKey += '_subject_$subjectId';
-    if (studentId != null) cacheKey += '_student_$studentId';
-    if (latestOnly) cacheKey += '_latest';
+  if (online) {
+    try {
+      String url = '$baseUrl/get_assessments.php?';
+      if (subjectId != null) url += 'subject_id=$subjectId&';
+      if (studentId != null) url += 'student_id=$studentId&';
+      if (url.endsWith('&')) url = url.substring(0, url.length - 1);
 
-    if (online) {
-      try {
-        String url = '$baseUrl/get_assessments.php?';
-        if (subjectId != null) url += 'subject_id=$subjectId&';
-        if (studentId != null) url += 'student_id=$studentId&';
-        if (latestOnly) url += 'latest_only=1&';
-        if (url.endsWith('&')) url = url.substring(0, url.length - 1);
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
+      final data = jsonDecode(response.body);
 
-        final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
-        final data = jsonDecode(response.body);
-        if (data['status'] != 'success') throw Exception(data['message'] ?? 'Failed');
-        final List list = data['assessments'] ?? [];
-        final assessments = list.map((e) => Assessment.fromJson(e as Map<String, dynamic>)).toList();
-        await _cacheData(_assessmentsBox, cacheKey, assessments, (a) => a.toJson());
-        return assessments;
-      } catch (e) {
-        debugPrint('Assessments error: $e');
-        final cached = await _getCachedData(_assessmentsBox, cacheKey, Assessment.fromJson);
-        if (cached != null && cached.isNotEmpty) return cached;
-        rethrow;
+      if (data['status'] != 'success') {
+        throw Exception(data['message'] ?? 'Failed to load assessments');
       }
-    }
 
-    final cached = await _getCachedData(_assessmentsBox, cacheKey, Assessment.fromJson);
-    if (cached != null && cached.isNotEmpty) return cached;
-    throw Exception('No internet and no cached assessments available');
+      List<Assessment> assessments = [];
+
+      // THIS IS THE FIX: Detect single mode from our PHP response
+      if (data['has_existing'] == true && data['assessment'] != null) {
+        assessments = [Assessment.fromJson(data['assessment'] as Map<String, dynamic>)];
+      } else if (data['has_existing'] == false) {
+        assessments = [];
+      } else {
+        // Normal list mode (given/received)
+        final List list = data['received'] ?? data['given'] ?? data['all_assessments'] ?? [];
+        assessments = list.map((e) => Assessment.fromJson(e as Map<String, dynamic>)).toList();
+      }
+
+      return assessments;
+    } catch (e) {
+      debugPrint('getAssessments error: $e');
+      rethrow;
+    }
   }
+
+  // Offline fallback (optional)
+  throw Exception('No internet connection');
+}
 
   // ──────────────────────────────────────────────
   // GET Assessments for Records Screen – UPDATED & SAFE VERSION
@@ -426,24 +431,20 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> updateAssessment({
-    required int subjectId,
-    required Map<String, dynamic> assessmentData,
-  }) async {
-    final userId = await getCurrentUserId();
-    if (userId == null) throw Exception('No user');
+  required Map<String, dynamic> assessmentData,
+}) async {
+  final response = await http.post(
+    Uri.parse('$baseUrl/update_assessment.php'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode(assessmentData),  // ← Just send the data directly!
+  );
 
-    final response = await http.post(
-      Uri.parse('$baseUrl/update_assessment.php'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'student_id': userId,
-        'subject_id': subjectId,
-        ...assessmentData,
-      }),
-    );
-
-    return jsonDecode(response.body);
+  final result = jsonDecode(response.body);
+  if (result['status'] != 'success') {
+    throw Exception(result['message'] ?? 'Update failed');
   }
+  return result;
+}
     // ──────────────────────────────────────────────
   // POST: Get AI Feedback (new - added for progress/records screen)
   // ──────────────────────────────────────────────

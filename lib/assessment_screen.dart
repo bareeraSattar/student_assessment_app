@@ -139,35 +139,97 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   bool get _isSelfAssessment => _selectedStudent != null && _selectedStudent!.rollNo == _currentUserRollNo;
 
   Future<void> _checkAndPreFill(int studentId) async {
-    try {
-      final assessments = await ApiService.getAssessments(
-        subjectId: widget.subject.id,
-        studentId: studentId,
-        latestOnly: true,
-      );
-
-      if (assessments.isNotEmpty) {
-        final assessment = assessments.first;
-        setState(() {
-          _existingAssessmentId = assessment.id;
-          for (var c in _criteria) {
-            _criteriaScores[c.id] = 0.0;
-          }
-        });
-      } else {
-        setState(() {
-          _existingAssessmentId = null;
-          for (var c in _criteria) {
-            _criteriaScores[c.id] = 0.0;
-          }
-        });
+  if (_isOffline) {
+    setState(() {
+      _existingAssessmentId = null;
+      for (var c in _criteria) {
+        _criteriaScores[c.id] = 0.0;
       }
-    } catch (e) {
-      if (!_isOffline) {
-        print('Pre-fill error: $e');
-      }
-    }
+    });
+    return;
   }
+
+  try {
+    final assessments = await ApiService.getAssessments(
+      subjectId: widget.subject.id,
+      studentId: studentId,
+      latestOnly: true,
+    );
+
+    print('=== DEBUG SLIDERS PRE-FILL ===');
+    print('Loaded assessments count: ${assessments.length}');
+
+    if (assessments.isNotEmpty) {
+      final assessment = assessments.first;
+      print('Assessment ID: ${assessment.id}');
+      print('Criteria scores from backend: ${assessment.criteriaScores.length} items');
+
+      // Print all backend names and scores
+      for (var s in assessment.criteriaScores) {
+        print('Backend: name="${s.name.trim()}" (obtained=${s.obtained})');
+      }
+
+      // Print all frontend criteria names
+      for (var c in _criteria) {
+        print('Frontend: name="${c.name.trim()}" (id=${c.id})');
+      }
+
+      setState(() {
+        _existingAssessmentId = assessment.id;
+
+        _criteriaScores.clear();
+        for (var c in _criteria) {
+          double score = 0.0;
+          for (var s in assessment.criteriaScores) {
+            String backendName = s.name.trim().toLowerCase();
+            String frontendName = c.name.trim().toLowerCase();
+
+            // Super forgiving match: exact, contains, or no spaces
+            if (backendName == frontendName ||
+                backendName.contains(frontendName) ||
+                frontendName.contains(backendName) ||
+                backendName.replaceAll(' ', '') == frontendName.replaceAll(' ', '')) {
+              score = s.obtained;
+              print('SLIDER MATCHED: ${c.name} = ${s.obtained}');
+              break;
+            }
+          }
+          _criteriaScores[c.id] = score;
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Loaded existing assessment (ID: ${assessment.id})'),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      setState(() {
+        _existingAssessmentId = null;
+        for (var c in _criteria) {
+          _criteriaScores[c.id] = 0.0;
+        }
+      });
+      print('No existing assessment found');
+    }
+  } catch (e) {
+    print('Pre-fill error: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Could not load previous marks: $e'),
+        backgroundColor: Colors.orange.shade800,
+      ),
+    );
+    setState(() {
+      _existingAssessmentId = null;
+      for (var c in _criteria) {
+        _criteriaScores[c.id] = 0.0;
+      }
+    });
+  }
+}
 
   double _calculateTotal() {
     double total = 0;
@@ -186,100 +248,104 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   }
 
   Future<void> _submitAssessment() async {
-    if (_selectedStudent == null || _selectedStudent!.id == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a valid student')),
+  if (_selectedStudent == null || _selectedStudent!.id == 0) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select a valid student')),
+    );
+    return;
+  }
+
+  if (_isSelfAssessment) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('You cannot assess yourself')),
+    );
+    return;
+  }
+
+  if (_isOffline) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Offline Mode: Submission requires internet connection'),
+        backgroundColor: Colors.orangeAccent,
+      ),
+    );
+    return;
+  }
+
+  final criteriaScores = _criteria.map((c) {
+    return {
+      'criteria_id': c.id,
+      'marks_awarded': _criteriaScores[c.id] ?? 0.0,
+    };
+  }).toList();
+
+  final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+  try {
+    setState(() => _isSubmitting = true);
+
+    Map<String, dynamic> response;
+
+    // DEBUG: Show what decision we are making
+    print('Submitting assessment - existing ID: $_existingAssessmentId');
+
+    if (_existingAssessmentId != null) {
+      print('→ Using UPDATE path (ID: $_existingAssessmentId)');
+      response = await ApiService.updateAssessment(
+        assessmentData: {
+          'assessment_id': _existingAssessmentId,
+          'criteria_scores': criteriaScores,
+          // You can add 'assessment_date': today if your PHP needs it for update
+          // 'assessment_date': today,
+        },
       );
-      return;
+    } else {
+      print('→ Using NEW submit path');
+      response = await ApiService.submitAssessment(
+        studentId: _selectedStudent!.id,
+        subjectId: widget.subject.id,
+        assessmentDate: today,
+        criteriaScores: criteriaScores,
+      );
     }
 
-    if (_isSelfAssessment) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You cannot assess yourself')),
-      );
-      return;
-    }
+    setState(() => _isSubmitting = false);
 
-    if (_isOffline) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Offline Mode: Submission requires internet connection'),
-          backgroundColor: Colors.orangeAccent,
+    if (response['status'] == 'success') {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Success'),
+          content: Text(_existingAssessmentId != null
+              ? 'Assessment updated successfully!'
+              : 'Assessment submitted successfully!'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context);
+              },
+              child: const Text('OK'),
+            ),
+          ],
         ),
       );
-      return;
-    }
-
-    final criteriaScores = _criteria.map((c) {
-      return {
-        'criteria_id': c.id,
-        'marks_awarded': _criteriaScores[c.id] ?? 0.0,
-      };
-    }).toList();
-
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-
-    try {
-      setState(() => _isSubmitting = true);
-
-      Map<String, dynamic> response;
-
-      if (_existingAssessmentId != null) {
-        response = await ApiService.updateAssessment(
-          subjectId: widget.subject.id,
-          assessmentData: {
-            'assessment_id': _existingAssessmentId,
-            'assessment_date': today,
-            'criteria_scores': criteriaScores,
-          },
-        );
-      } else {
-        response = await ApiService.submitAssessment(
-          studentId: _selectedStudent!.id,
-          subjectId: widget.subject.id,
-          assessmentDate: today,
-          criteriaScores: criteriaScores,
-        );
-      }
-
-      setState(() => _isSubmitting = false);
-
-      if (response['status'] == 'success') {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Success'),
-            content: Text(_existingAssessmentId != null
-                ? 'Assessment updated successfully!'
-                : 'Assessment submitted successfully!'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  Navigator.pop(context);
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(response['message'] ?? 'Submission failed')),
-        );
-      }
-    } catch (e) {
-      setState(() => _isSubmitting = false);
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error submitting assessment: $e')),
+        SnackBar(content: Text(response['message'] ?? 'Submission failed')),
       );
     }
+  } catch (e) {
+    setState(() => _isSubmitting = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error submitting assessment: $e')),
+    );
   }
+}
 
   void _showStudentSelection() {
     _searchController.clear();
 
-    // Filter out self for students (admins see everyone)
     List<Student> selectableStudents = _students;
     if (!_isAdmin) {
       selectableStudents = _students.where((s) => s.rollNo != _currentUserRollNo).toList();
