@@ -562,5 +562,79 @@ class ApiService {
       'reply': 'Could not connect to AI',
     };
   }
- } 
+ }
+   // ──────────────────────────────────────────────
+  // NEW: Set Assessment Password (Admin only)
+  // ──────────────────────────────────────────────
+  static Future<bool> setAssessmentPassword(String password) async {
+    final userId = await getCurrentUserId();
+    if (userId == null) {
+      debugPrint('setAssessmentPassword: No user ID found');
+      return false;
+    }
+
+    final isAdmin = await isCurrentUserAdmin();
+    if (!isAdmin) {
+      debugPrint('setAssessmentPassword: User is not admin');
+      return false;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/set_password.php'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': userId,
+          'password': password.trim(),
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final success = data['message'] == 'Password set successfully';
+        if (success) {
+          debugPrint('Password set successfully');
+        } else {
+          debugPrint('Set password failed: ${data['message']}');
+        }
+        return success;
+      } else {
+        debugPrint('Set password HTTP error: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('setAssessmentPassword error: $e');
+      return false;
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // NEW: Verify Assessment Password
+  // ──────────────────────────────────────────────
+  static Future<bool> verifyAssessmentPassword(String password) async {
+    if (password.trim().isEmpty) return false;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/verify_password.php'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'password': password.trim(),
+        }),
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final isValid = data['valid'] == true;
+        debugPrint('Password verification result: $isValid');
+        return isValid;
+      } else {
+        debugPrint('Verify password HTTP error: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('verifyAssessmentPassword error: $e');
+      return false;
+    }
+  } 
 }

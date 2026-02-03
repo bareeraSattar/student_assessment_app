@@ -111,8 +111,173 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
-  void _navigateToAssessment(Subject subject) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => AssessmentScreen(subject: subject)));
+  // ──────────────────────────────────────────────
+  // NEW: Password check before opening assessment
+  // ──────────────────────────────────────────────
+  Future<bool> _checkAssessmentPassword() async {
+    // Admin bypass
+    final isAdmin = await ApiService.isCurrentUserAdmin();
+    if (isAdmin) return true;
+
+    // Show dialog for students
+    String? enteredPassword;
+
+    final bool? proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Assessment Password Required'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Please enter the password to access the assessment.'),
+            const SizedBox(height: 16),
+            TextField(
+              obscureText: true,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+                hintText: 'Enter password',
+              ),
+              onChanged: (value) => enteredPassword = value,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (enteredPassword == null || enteredPassword!.trim().isEmpty) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('Please enter a password')),
+                );
+                return;
+              }
+
+              final isValid = await ApiService.verifyAssessmentPassword(enteredPassword!.trim());
+
+              if (!mounted) return;
+
+              if (isValid) {
+                Navigator.pop(dialogContext, true);
+              } else {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(
+                    content: Text('Incorrect password'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+
+    return proceed == true;
+  }
+
+  // ──────────────────────────────────────────────
+  // NEW: Admin dialog to set/change/remove password
+  // ──────────────────────────────────────────────
+  Future<void> _showPasswordManagementDialog() async {
+  String? newPassword;
+  bool remove = false;
+
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      // Give more vertical space to avoid overflow
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 80.0),
+      // Make dialog scrollable when keyboard appears or content is tall
+      scrollable: true,
+      title: const Text('Manage Assessment Password'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Set a new password or remove the existing one.'),
+            const SizedBox(height: 16),
+            TextField(
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'New Password',
+                border: OutlineInputBorder(),
+                hintText: 'Leave empty to remove/disable',
+              ),
+              onChanged: (value) => newPassword = value,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '• Enter a value → set/change password\n'
+              '• Leave blank → remove password requirement',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          style: TextButton.styleFrom(foregroundColor: Colors.red),
+          onPressed: () {
+            remove = true;
+            Navigator.pop(dialogContext);
+          },
+          child: const Text('Remove Password'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Apply'),
+        ),
+      ],
+    ),
+  );
+
+  // If dialog was dismissed without action → do nothing
+  if (newPassword == null && !remove) return;
+
+  final passwordToSend = remove ? '' : (newPassword?.trim() ?? '');
+
+  final success = await ApiService.setAssessmentPassword(passwordToSend);
+
+  if (!mounted) return;
+
+  if (success) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(passwordToSend.isEmpty ? 'Password removed' : 'Password updated'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  } else {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Failed to update password'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+}
+
+  Future<void> _navigateToAssessment(Subject subject) async {
+    final canProceed = await _checkAssessmentPassword();
+
+    if (canProceed && mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => AssessmentScreen(subject: subject)),
+      );
+    }
   }
 
   void _navigateToRecords(Subject subject) {
@@ -226,71 +391,66 @@ class _HomeScreenState extends State<HomeScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12), // reduced bottom padding
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Card(
         elevation: isDark ? 3 : 1.5,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Padding(
-          padding: const EdgeInsets.all(12), // reduced from 16 → 12
+          padding: const EdgeInsets.all(12),
           child: Column(
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
                   'assets/uni_logo.jpeg',
-                  height: 48,           // reduced from 60
+                  height: 48,
                   width: 48,
                   fit: BoxFit.contain,
                   errorBuilder: (_, __, ___) => const Icon(Icons.school, size: 48, color: Colors.grey),
                 ),
               ),
-              const SizedBox(height: 8), // reduced from 12
-
+              const SizedBox(height: 8),
               Text(
                 _studentName != null ? 'Welcome, $_studentName!' : 'Welcome, Student!',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(     // titleLarge → titleMedium
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,                                               // explicit smaller size
-                ),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                    ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 4), // reduced from 6
-
+              const SizedBox(height: 4),
               if (_rollNo != null)
                 Text(
                   'Roll No: $_rollNo',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(    // titleMedium → titleSmall
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                 ),
-
               if (_email != null)
                 Padding(
-                  padding: const EdgeInsets.only(top: 2), // reduced from 4
+                  padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     'Email: $_email',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(   // bodyMedium → bodySmall
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
+                  ),
+                ),
+              const SizedBox(height: 6),
+              Text(
+                'Select a subject to start assessment or view records',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                       fontSize: 13,
                     ),
-                  ),
-                ),
-
-              const SizedBox(height: 6), // reduced from 8
-              Text(
-                'Select a subject to start assessment or view records',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(       // bodyMedium → bodySmall
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontSize: 13,
-                ),
                 textAlign: TextAlign.center,
               ),
-
               if (_isOffline)
                 Padding(
-                  padding: const EdgeInsets.only(top: 8), // reduced from 12
+                  padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     'Offline Mode - Data from last sync',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -391,6 +551,25 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               actions: [
                 IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _loadSubjects),
+
+                // ─── Admin-only password management button ───
+                FutureBuilder<bool>(
+                  future: ApiService.isCurrentUserAdmin(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SizedBox.shrink();
+                    }
+                    if (snapshot.hasData && snapshot.data == true) {
+                      return IconButton(
+                        icon: const Icon(Icons.lock_reset_rounded),
+                        tooltip: 'Manage Assessment Password',
+                        onPressed: _showPasswordManagementDialog,
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+
                 IconButton(icon: const Icon(Icons.logout_rounded), onPressed: _handleLogout),
               ],
             ),
