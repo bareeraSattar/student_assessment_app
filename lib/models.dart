@@ -1,6 +1,6 @@
 // lib/models.dart
 
-import 'package:flutter/foundation.dart'; // ← Added this import for debugPrint
+import 'package:flutter/foundation.dart'; // ← Already there for debugPrint
 
 class Student {
   final int id;
@@ -119,6 +119,7 @@ class Criteria {
   final String name;
   final double maxMarks;
   final double? weightage;
+  final bool isPresentation;  // ← NEW: Added for presentation-specific criteria
 
   Criteria({
     required this.id,
@@ -126,6 +127,7 @@ class Criteria {
     required this.name,
     required this.maxMarks,
     this.weightage,
+    required this.isPresentation,  // ← NEW: Required in constructor
   });
 
   factory Criteria.fromJson(Map<String, dynamic> json) {
@@ -137,6 +139,9 @@ class Criteria {
       weightage: json['weightage'] != null
           ? double.tryParse(json['weightage']?.toString() ?? '0')
           : null,
+      isPresentation: json['is_presentation'] == 1 ||  // ← NEW: Parse from backend (1 = true)
+                      json['is_presentation'] == true ||
+                      json['is_presentation'] == '1',
     );
   }
 
@@ -147,6 +152,7 @@ class Criteria {
       'name': name,
       'max_marks': maxMarks,
       'weightage': weightage,
+      'is_presentation': isPresentation ? 1 : 0,  // ← NEW: Send as 1/0
     };
   }
 }

@@ -444,9 +444,11 @@ class ApiService {
 
     return jsonDecode(response.body);
   }
-    // ──────────────────────────────────────────────
+
+  // ──────────────────────────────────────────────
   // POST: Get AI Feedback (new - added for progress/records screen)
   // ──────────────────────────────────────────────
+
   static Future<Map<String, dynamic>> getAIFeedback({
     required int subjectId,
     String? subjectName,              // optional - helps make feedback better
@@ -513,59 +515,62 @@ class ApiService {
       };
     }
   }
+
   static Future<Map<String, dynamic>> chatWithAI({
-  required String message,
-  required List<Map<String, String>> history,
-}) async {
-  final online = await _isOnline();
-  if (!online) {
-    return {'reply': 'No internet connection'};
-  }
+    required String message,
+    required List<Map<String, String>> history,
+  }) async {
+    final online = await _isOnline();
+    if (!online) {
+      return {'reply': 'No internet connection'};
+    }
 
-  final url = Uri.parse('$baseUrl/chat_with_ai.php');
+    final url = Uri.parse('$baseUrl/chat_with_ai.php');
 
-  final body = {
-    'message': message,
-    'history': history,
-  };
+    final body = {
+      'message': message,
+      'history': history,
+    };
 
-  try {
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    ).timeout(const Duration(seconds: 25));
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 25));
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      if (data['status'] == 'success') {
-        return {
-          'success': true,
-          'reply': data['reply'] as String,
-        };
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['status'] == 'success') {
+          return {
+            'success': true,
+            'reply': data['reply'] as String,
+          };
+        } else {
+          return {
+            'success': false,
+            'reply': data['message'] as String? ?? 'Chat failed',
+          };
+        }
       } else {
         return {
           'success': false,
-          'reply': data['message'] as String? ?? 'Chat failed',
+          'reply': 'Server error ${response.statusCode}',
         };
       }
-    } else {
+    } catch (e) {
+      debugPrint('Chat AI error: $e');
       return {
         'success': false,
-        'reply': 'Server error ${response.statusCode}',
+        'reply': 'Could not connect to AI',
       };
     }
-  } catch (e) {
-    debugPrint('Chat AI error: $e');
-    return {
-      'success': false,
-      'reply': 'Could not connect to AI',
-    };
   }
- }
-   // ──────────────────────────────────────────────
+
+  // ──────────────────────────────────────────────
   // NEW: Set Assessment Password (Admin only)
   // ──────────────────────────────────────────────
+
   static Future<bool> setAssessmentPassword(String password) async {
     final userId = await getCurrentUserId();
     if (userId == null) {
@@ -611,6 +616,7 @@ class ApiService {
   // ──────────────────────────────────────────────
   // NEW: Verify Assessment Password
   // ──────────────────────────────────────────────
+
   static Future<bool> verifyAssessmentPassword(String password) async {
     if (password.trim().isEmpty) return false;
 
@@ -636,5 +642,295 @@ class ApiService {
       debugPrint('verifyAssessmentPassword error: $e');
       return false;
     }
-  } 
+  }
+
+  // ──────────────────────────────────────────────
+  // ──────────────────────────────────────────────
+  // ──────────────────────────────────────────────
+  // NEW PRESENTATION METHODS – ADDED HERE SAFELY
+  // ──────────────────────────────────────────────
+  // ──────────────────────────────────────────────
+  // ──────────────────────────────────────────────
+
+  /// Fetch upcoming presentations for a specific subject
+  /// Uses get_presentations_by_subject.php
+  static Future<List<dynamic>> getPresentationsBySubject(
+  int subjectId, {
+  bool includeCompleted = false,
+}) async {
+  final online = await _isOnline();
+  if (!online) {
+    debugPrint('Offline - no presentations loaded');
+    return [];
+  }
+
+  try {
+    String url = '$baseUrl/get_presentations_by_subject.php?subject_id=$subjectId';
+    if (includeCompleted) {
+      url += '&include_completed=1';
+    }
+
+    final uri = Uri.parse(url);
+
+    debugPrint('Fetching presentations: $uri');
+
+    final response = await http.get(uri).timeout(const Duration(seconds: 12));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data is List) {
+        debugPrint('Presentations loaded: ${data.length} items');
+        return data;
+      } else if (data is Map && data['message'] != null) {
+        debugPrint('API message: ${data['message']}');
+        return [];
+      } else {
+        debugPrint('Unexpected response format');
+        return [];
+      }
+    } else {
+      debugPrint('Presentations HTTP error: ${response.statusCode} - ${response.body}');
+      return [];
+    }
+  } catch (e) {
+    debugPrint('getPresentationsBySubject error: $e');
+    return [];
+  }
+}
+  /// Schedule a new presentation
+  /// Uses schedule_presentation.php
+  static Future<Map<String, dynamic>> schedulePresentation({
+    required int subjectId,
+    required String participantRolls, // e.g. "CS-001,CS-005"
+    required String presentationDate, // ISO: "2026-02-20T10:00:00"
+    String? notes,
+  }) async {
+    final rollNumber = await getCurrentUserRoll();
+    if (rollNumber.isEmpty) {
+      return {'success': false, 'message': 'No user roll number found'};
+    }
+
+    final body = {
+      'subject_id': subjectId,
+      'participant_rolls': participantRolls.trim(),
+      'assessor_roll_number': rollNumber,
+      'presentation_date': presentationDate,
+      if (notes != null && notes.isNotEmpty) 'notes': notes.trim(),
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/schedule_presentation.php'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 12));
+
+      final result = jsonDecode(response.body);
+      if (response.statusCode == 200 && result['message']?.toString().toLowerCase().contains('success') == true) {
+        return {'success': true, 'message': result['message'] ?? 'Scheduled successfully'};
+      } else {
+        return {'success': false, 'message': result['message'] ?? 'Failed to schedule presentation'};
+      }
+    } catch (e) {
+      debugPrint('schedulePresentation error: $e');
+      return {'success': false, 'message': 'Network or server error'};
+    }
+  }
+
+  /// Get detailed results for a specific presentation
+  /// Uses get_presentation_results.php
+  static Future<Map<String, dynamic>> getPresentationResults(
+  int presentationId, {
+  String? userRollNumber,           // null = admin/full history
+  int isAdmin = 0,                  // 0 = student, 1 = admin
+}) async {
+  // Determine final roll and admin flag
+  String? finalRoll = userRollNumber;
+
+  // If no explicit roll passed, fallback to current user (for student mode)
+  if (finalRoll == null) {
+    finalRoll = await getCurrentUserRoll();
+  }
+
+  // If still no roll and not admin mode, error
+  final effectiveIsAdmin = (userRollNumber == null) ? 1 : isAdmin;
+  if (finalRoll == null || finalRoll.isEmpty) {
+    if (effectiveIsAdmin == 1) {
+      finalRoll = ''; // empty = skip roll check for admin
+    } else {
+      return {'success': false, 'message': 'User roll number not found'};
+    }
+  }
+
+  final online = await _isOnline();
+  if (!online) {
+    return {'success': false, 'message': 'No internet connection'};
+  }
+
+  try {
+    String url = '$baseUrl/get_presentation_results.php?presentation_id=$presentationId';
+
+    // Only send roll if we have one (student mode)
+    if (finalRoll.isNotEmpty) {
+      url += '&user_roll_number=${Uri.encodeComponent(finalRoll)}';
+    }
+
+    // Always send is_admin flag
+    url += '&is_admin=$effectiveIsAdmin';
+
+    final uri = Uri.parse(url);
+
+    debugPrint('Fetching presentation results: $uri');
+
+    final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data['status'] == 'success') {
+        return data;
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Failed to load results'};
+      }
+    } else {
+      return {'success': false, 'message': 'Server error ${response.statusCode}'};
+    }
+  } catch (e) {
+    debugPrint('getPresentationResults error: $e');
+    return {'success': false, 'message': e.toString()};
+  }
+}
+  /// Submit assessment specifically for a presentation (per student)
+  /// Uses submit_presentation_assessment.php
+  static Future<Map<String, dynamic>> submitPresentationAssessment({
+  required int presentationId,
+  required String studentRoll,
+  required int subjectId,
+  required List<Map<String, dynamic>> scores,
+}) async {
+  final rollNumber = (await getCurrentUserRoll()).trim();
+  final userId = await getCurrentUserId();
+  final isAdmin = await isCurrentUserAdmin();
+
+  // Debug prints (very useful)
+  print('DEBUG submitPresentationAssessment:');
+  print('  - userId: $userId');
+  print('  - rollNumber: "$rollNumber" (length: ${rollNumber.length})');
+  print('  - isAdmin: $isAdmin');
+  print('  - studentRoll (cleaned): "${studentRoll.trim()}"');
+
+  if (userId == null) {
+    return {
+      'success': false,
+      'message': 'User not logged in (no user ID found). Please log in again.',
+    };
+  }
+
+  final body = {
+    'presentation_id': presentationId,
+    'assessor_roll_number': rollNumber,       // empty OK for admin
+    'assessor_user_id': userId,               // primary for admin identification
+    'is_admin': isAdmin ? 1 : 0,              // tells backend it's admin
+    'student_roll': studentRoll.trim(),
+    'subject_id': subjectId,
+    'scores': scores,
+  };
+
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl/submit_presentation_assessment.php'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 15));
+
+    print('DEBUG - HTTP status: ${response.statusCode}');
+    print('DEBUG - Raw response body: ${response.body}');
+
+    Map<String, dynamic> result;
+    try {
+      result = jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (jsonErr) {
+      print('DEBUG - JSON parse error: $jsonErr');
+      return {
+        'success': false,
+        'message': 'Invalid response from server',
+      };
+    }
+
+    if (response.statusCode == 200 && result['success'] == true) {
+      return {
+        'success': true,
+        'message': result['message'] ?? 'Assessment submitted successfully',
+        'assessment_id': result['assessment_id'],
+      };
+    } else {
+      return {
+        'success': false,
+        'message': result['message'] ?? 'Failed to submit assessment (server error)',
+      };
+    }
+  } catch (e) {
+    print('DEBUG - Submit exception: $e');
+    return {
+      'success': false,
+      'message': 'Network or timeout error: $e',
+    };
+  }
+}
+  static Future<Map<String, dynamic>> addCriteriaForPresentation({
+  required int subjectId,
+  required String name,
+  required double maxMarks,
+  String? description,
+}) async {
+  final userId = await getCurrentUserId();  // must return int? (null if not logged in)
+  final rollNumber = await getCurrentUserRoll(); // returns String (can be empty for admins)
+  final isAdmin = await isCurrentUserAdmin(); // returns bool
+
+  print('DEBUG - Adding criteria as: userId=$userId, roll="$rollNumber", isAdmin=$isAdmin');
+
+  if (userId == null) {
+    return {'success': false, 'message': 'User not logged in'};
+  }
+
+  final body = {
+    'subject_id': subjectId,
+    'name': name.trim(),
+    'max_marks': maxMarks,
+    if (description != null && description.isNotEmpty) 'description': description.trim(),
+    'assessor_roll_number': rollNumber,
+    'assessor_user_id': userId,
+    'is_admin': isAdmin ? 1 : 0,
+    'is_presentation': 1,
+  };
+
+  print('DEBUG - Sending body: ${jsonEncode(body)}');
+
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl/add_criteria_for_presentation.php'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+
+    print('DEBUG - Server status: ${response.statusCode}, body: ${response.body}');
+
+    final result = jsonDecode(response.body);
+
+    if (response.statusCode == 200 && result['success'] == true) {
+      return {
+        'success': true,
+        'message': result['message'] ?? 'Criteria added',
+        'id': result['id']
+      };
+    } else {
+      return {
+        'success': false,
+        'message': result['message'] ?? 'Failed to add criteria (server error)',
+      };
+    }
+  } catch (e) {
+    print('DEBUG - HTTP error: $e');
+    return {'success': false, 'message': 'Network error: $e'};
+  }
+}
 }

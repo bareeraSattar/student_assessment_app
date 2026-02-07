@@ -7,6 +7,7 @@ import 'models.dart';
 import 'assessment_screen.dart';
 import 'records_screen.dart';
 import 'login_screen.dart';
+import 'presentation_list_screen.dart'; // Make sure this file exists
 
 class HomeScreen extends StatefulWidget {
   final Map<String, dynamic>? userData;
@@ -26,6 +27,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _studentName;
   String? _rollNo;
   String? _email;
+
+  bool _isAdmin = false;
 
   static const List<Color> _accentColors = [
     Color(0xFF6366F1),
@@ -55,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadUserData() async {
     if (widget.userData != null) {
       _updateUserFromMap(widget.userData!);
+      _isAdmin = widget.userData!['is_admin'] == 1 || widget.userData!['is_admin'] == true;
       return;
     }
 
@@ -64,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
       try {
         final userMap = jsonDecode(userJson) as Map<String, dynamic>;
         _updateUserFromMap(userMap);
+        _isAdmin = userMap['is_admin'] == 1 || userMap['is_admin'] == true;
       } catch (e) {
         print('Failed to parse saved user: $e');
       }
@@ -111,15 +116,10 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
-  // ──────────────────────────────────────────────
-  // NEW: Password check before opening assessment
-  // ──────────────────────────────────────────────
   Future<bool> _checkAssessmentPassword() async {
-    // Admin bypass
     final isAdmin = await ApiService.isCurrentUserAdmin();
     if (isAdmin) return true;
 
-    // Show dialog for students
     String? enteredPassword;
 
     final bool? proceed = await showDialog<bool>(
@@ -182,92 +182,86 @@ class _HomeScreenState extends State<HomeScreen> {
     return proceed == true;
   }
 
-  // ──────────────────────────────────────────────
-  // NEW: Admin dialog to set/change/remove password
-  // ──────────────────────────────────────────────
   Future<void> _showPasswordManagementDialog() async {
-  String? newPassword;
-  bool remove = false;
+    String? newPassword;
+    bool remove = false;
 
-  await showDialog(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      // Give more vertical space to avoid overflow
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 80.0),
-      // Make dialog scrollable when keyboard appears or content is tall
-      scrollable: true,
-      title: const Text('Manage Assessment Password'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Set a new password or remove the existing one.'),
-            const SizedBox(height: 16),
-            TextField(
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'New Password',
-                border: OutlineInputBorder(),
-                hintText: 'Leave empty to remove/disable',
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 80.0),
+        scrollable: true,
+        title: const Text('Manage Assessment Password'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Set a new password or remove the existing one.'),
+              const SizedBox(height: 16),
+              TextField(
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'New Password',
+                  border: OutlineInputBorder(),
+                  hintText: 'Leave empty to remove/disable',
+                ),
+                onChanged: (value) => newPassword = value,
               ),
-              onChanged: (value) => newPassword = value,
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '• Enter a value → set/change password\n'
-              '• Leave blank → remove password requirement',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
+              const SizedBox(height: 12),
+              const Text(
+                '• Enter a value → set/change password\n'
+                '• Leave blank → remove password requirement',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          style: TextButton.styleFrom(foregroundColor: Colors.red),
-          onPressed: () {
-            remove = true;
-            Navigator.pop(dialogContext);
-          },
-          child: const Text('Remove Password'),
-        ),
-        ElevatedButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Apply'),
-        ),
-      ],
-    ),
-  );
-
-  // If dialog was dismissed without action → do nothing
-  if (newPassword == null && !remove) return;
-
-  final passwordToSend = remove ? '' : (newPassword?.trim() ?? '');
-
-  final success = await ApiService.setAssessmentPassword(passwordToSend);
-
-  if (!mounted) return;
-
-  if (success) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(passwordToSend.isEmpty ? 'Password removed' : 'Password updated'),
-        backgroundColor: Colors.green,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () {
+              remove = true;
+              Navigator.pop(dialogContext);
+            },
+            child: const Text('Remove Password'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Apply'),
+          ),
+        ],
       ),
     );
-  } else {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Failed to update password'),
-        backgroundColor: Colors.red,
-      ),
-    );
+
+    if (newPassword == null && !remove) return;
+
+    final passwordToSend = remove ? '' : (newPassword?.trim() ?? '');
+
+    final success = await ApiService.setAssessmentPassword(passwordToSend);
+
+    if (!mounted) return;
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(passwordToSend.isEmpty ? 'Password removed' : 'Password updated'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to update password'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
-}
 
   Future<void> _navigateToAssessment(Subject subject) async {
     final canProceed = await _checkAssessmentPassword();
@@ -282,6 +276,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _navigateToRecords(Subject subject) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => RecordsScreen(subject: subject)));
+  }
+
+  void _navigateToPresentations(Subject subject) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PresentationListScreen(
+          subjectId: subject.id,
+          subjectName: subject.name,
+          userRollNumber: _rollNo ?? '',
+          isAdmin: _isAdmin ? 1 : 0,
+        ),
+      ),
+    );
   }
 
   IconData _getSubjectIcon(String name) {
@@ -305,84 +313,73 @@ class _HomeScreenState extends State<HomeScreen> {
       elevation: Theme.of(context).brightness == Brightness.light ? 1.5 : 3,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: accentColor.withOpacity(0.3), width: 1.5),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        childrenPadding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+        leading: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: accentColor.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(icon, size: 36, color: accentColor),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        title: Text(
+          subject.name,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        subtitle: subject.description?.isNotEmpty ?? false
+            ? Text(
+                subject.description!,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              )
+            : null,
+        children: [
+          Column(
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: accentColor.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(icon, size: 36, color: accentColor),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      subject.name,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              if (subject.description?.isNotEmpty ?? false) ...[
-                const SizedBox(height: 12),
-                Text(
-                  subject.description!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        height: 1.4,
-                      ),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
+              FilledButton.icon(
+                icon: const Icon(Icons.assignment_outlined, size: 20),
+                label: const Text('Assessment'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                  backgroundColor: accentColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  minimumSize: const Size(double.infinity, 56),
                 ),
-              ],
-              const SizedBox(height: 28),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      icon: const Icon(Icons.assignment_outlined, size: 20),
-                      label: const Text('Assessment'),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        backgroundColor: accentColor,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      ),
-                      onPressed: () => _navigateToAssessment(subject),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.history_outlined, size: 20),
-                      label: const Text('Records'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: BorderSide(color: accentColor.withOpacity(0.7)),
-                        foregroundColor: accentColor,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      ),
-                      onPressed: () => _navigateToRecords(subject),
-                    ),
-                  ),
-                ],
+                onPressed: () => _navigateToAssessment(subject),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.history_outlined, size: 20),
+                label: const Text('Records'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                  side: BorderSide(color: accentColor.withOpacity(0.7)),
+                  foregroundColor: accentColor,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  minimumSize: const Size(double.infinity, 56),
+                ),
+                onPressed: () => _navigateToRecords(subject),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.event_note_outlined, size: 20),
+                label: const Text('Presentations'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                  side: BorderSide(color: accentColor.withOpacity(0.7)),
+                  foregroundColor: accentColor,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  minimumSize: const Size(double.infinity, 56),
+                ),
+                onPressed: () => _navigateToPresentations(subject),
               ),
             ],
           ),
-        ),
+        ],
       ),
     );
   }
@@ -441,7 +438,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               const SizedBox(height: 6),
               Text(
-                'Select a subject to start assessment or view records',
+                'Tap a subject to view options',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                       fontSize: 13,
@@ -552,7 +549,6 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _loadSubjects),
 
-                // ─── Admin-only password management button ───
                 FutureBuilder<bool>(
                   future: ApiService.isCurrentUserAdmin(),
                   builder: (context, snapshot) {
