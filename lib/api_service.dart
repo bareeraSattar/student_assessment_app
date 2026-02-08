@@ -137,168 +137,165 @@ class ApiService {
   // GET Criteria
   // ──────────────────────────────────────────────
 
-  static Future<List<Criteria>> getCriteria(int subjectId) async {
-    final online = await _isOnline();
-    final cacheKey = 'criteria_for_subject_$subjectId';
+  static Future<List<Criteria>> getCriteria(
+  int subjectId, {
+  String type = 'assessment',  // default to 'assessment' so most calls are safe
+}) async {
+  final online = await _isOnline();
+  final cacheKey = 'criteria_for_subject_${subjectId}_type_$type';
 
-    if (online) {
-      try {
-        final response = await http.get(Uri.parse('$baseUrl/get_criteria.php?subject_id=$subjectId')).timeout(const Duration(seconds: 12));
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          if (data['status'] != 'success') throw Exception(data['message'] ?? 'Error');
-          final List list = data['criteria'] ?? [];
-          final criteriaList = list.map((e) => Criteria.fromJson(e)).toList();
-          await _cacheData(_criteriaBox, cacheKey, criteriaList, (c) => c.toJson());
-          return criteriaList;
-        }
-      } catch (e) {
-        debugPrint('Criteria error: $e');
+  if (online) {
+    try {
+      String url = '$baseUrl/get_criteria.php?subject_id=$subjectId';
+      if (type == 'assessment' || type == 'presentation') {
+        url += '&type=$type';
       }
-    }
 
-    final cached = await _getCachedData(_criteriaBox, cacheKey, Criteria.fromJson);
-    if (cached != null && cached.isNotEmpty) return cached;
-    throw Exception('No criteria available');
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] != 'success') throw Exception(data['message'] ?? 'Error');
+        final List list = data['criteria'] ?? [];
+        final criteriaList = list.map((e) => Criteria.fromJson(e)).toList();
+        await _cacheData(_criteriaBox, cacheKey, criteriaList, (c) => c.toJson());
+        return criteriaList;
+      }
+    } catch (e) {
+      debugPrint('Criteria error (type=$type): $e');
+    }
   }
+
+  final cached = await _getCachedData(_criteriaBox, cacheKey, Criteria.fromJson);
+  if (cached != null && cached.isNotEmpty) return cached;
+  throw Exception('No criteria available');
+}
 
   // ──────────────────────────────────────────────
   // GET Assessments (original – used in other screens)
   // ──────────────────────────────────────────────
 
   static Future<List<Assessment>> getAssessments({
-    int? subjectId,
-    int? studentId,
-    bool latestOnly = false,
-  }) async {
-    final online = await _isOnline();
+  int? subjectId,
+  int? studentId,
+  bool latestOnly = false,
+  String type = 'assessment',  // default to regular assessments
+}) async {
+  final online = await _isOnline();
 
-    String cacheKey = 'assessments';
-    if (subjectId != null) cacheKey += '_subject_$subjectId';
-    if (studentId != null) cacheKey += '_student_$studentId';
-    if (latestOnly) cacheKey += '_latest';
+  String cacheKey = 'assessments_type_$type';
+  if (subjectId != null) cacheKey += '_subject_$subjectId';
+  if (studentId != null) cacheKey += '_student_$studentId';
+  if (latestOnly) cacheKey += '_latest';
 
-    if (online) {
-      try {
-        String url = '$baseUrl/get_assessments.php?';
-        if (subjectId != null) url += 'subject_id=$subjectId&';
-        if (studentId != null) url += 'student_id=$studentId&';
-        if (latestOnly) url += 'latest_only=1&';
-        if (url.endsWith('&')) url = url.substring(0, url.length - 1);
+  if (online) {
+    try {
+      String url = '$baseUrl/get_assessments.php?';
+      if (subjectId != null) url += 'subject_id=$subjectId&';
+      if (studentId != null) url += 'student_id=$studentId&';
+      if (latestOnly) url += 'latest_only=1&';
+      url += 'type=$type&';
 
-        final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
-        final data = jsonDecode(response.body);
-        if (data['status'] != 'success') throw Exception(data['message'] ?? 'Failed');
-        final List list = data['assessments'] ?? [];
-        final assessments = list.map((e) => Assessment.fromJson(e as Map<String, dynamic>)).toList();
-        await _cacheData(_assessmentsBox, cacheKey, assessments, (a) => a.toJson());
-        return assessments;
-      } catch (e) {
-        debugPrint('Assessments error: $e');
-        final cached = await _getCachedData(_assessmentsBox, cacheKey, Assessment.fromJson);
-        if (cached != null && cached.isNotEmpty) return cached;
-        rethrow;
-      }
+      if (url.endsWith('&')) url = url.substring(0, url.length - 1);
+
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
+      final data = jsonDecode(response.body);
+      if (data['status'] != 'success') throw Exception(data['message'] ?? 'Failed');
+
+      // Try to find the list — your backend returns different keys depending on mode
+      final List list = data['assessments'] 
+                     ?? data['given'] 
+                     ?? data['received'] 
+                     ?? data['all_assessments'] 
+                     ?? [];
+
+      final assessments = list.map((e) => Assessment.fromJson(e as Map<String, dynamic>)).toList();
+      await _cacheData(_assessmentsBox, cacheKey, assessments, (a) => a.toJson());
+      return assessments;
+    } catch (e) {
+      debugPrint('Assessments error (type=$type): $e');
+      final cached = await _getCachedData(_assessmentsBox, cacheKey, Assessment.fromJson);
+      if (cached != null && cached.isNotEmpty) return cached;
+      rethrow;
     }
-
-    final cached = await _getCachedData(_assessmentsBox, cacheKey, Assessment.fromJson);
-    if (cached != null && cached.isNotEmpty) return cached;
-    throw Exception('No internet and no cached assessments available');
   }
+
+  final cached = await _getCachedData(_assessmentsBox, cacheKey, Assessment.fromJson);
+  if (cached != null && cached.isNotEmpty) return cached;
+  throw Exception('No internet and no cached assessments available');
+}
 
   // ──────────────────────────────────────────────
   // GET Assessments for Records Screen – UPDATED & SAFE VERSION
   // ──────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> getAssessmentsForRecords(int subjectId) async {
-    final online = await _isOnline();
+  final online = await _isOnline();
 
-    final rollNumber = await getCurrentUserRoll();
-    final isAdmin = await isCurrentUserAdmin();
+  final rollNumber = await getCurrentUserRoll();
+  final isAdmin = await isCurrentUserAdmin();
 
-    if (online) {
-      try {
-        String url = '$baseUrl/get_assessments.php?subject_id=$subjectId';
-        if (rollNumber.isNotEmpty) url += '&user_roll_number=${Uri.encodeComponent(rollNumber)}';
-        url += '&is_admin=${isAdmin ? 1 : 0}';
+  if (online) {
+    try {
+      // Important change here ↓
+      String url = '$baseUrl/get_assessments.php?subject_id=$subjectId&type=assessment';
+      if (rollNumber.isNotEmpty) url += '&user_roll_number=${Uri.encodeComponent(rollNumber)}';
+      url += '&is_admin=${isAdmin ? 1 : 0}';
 
-        debugPrint('Fetching records from: $url');
+      debugPrint('Fetching records from: $url');
 
-        final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
-        if (response.statusCode != 200) {
-          throw Exception('Server returned ${response.statusCode}');
-        }
-
-        final rawBody = response.body;
-        debugPrint('Raw API response body: $rawBody'); // ← Helps debugging
-
-        final data = jsonDecode(rawBody) as Map<String, dynamic>;
-        debugPrint('API response status: ${data['status']}');
-
-        if (data['status'] != 'success') {
-          debugPrint('API returned non-success: ${data['message']}');
-          throw Exception(data['message'] ?? 'API returned error');
-        }
-
-        // Safe parsing of average_percentage (handles string or number)
-        final avgRaw = data['average_percentage'];
-        final avgParsed = avgRaw != null ? double.tryParse(avgRaw.toString()) : null;
-
-        return {
-          'given': (data['given'] as List<dynamic>? ?? [])
-              .map((e) {
-                try {
-                  return Assessment.fromJson(e as Map<String, dynamic>);
-                } catch (parseErr) {
-                  debugPrint('Error parsing given assessment: $parseErr');
-                  return null;
-                }
-              })
-              .whereType<Assessment>()
-              .toList(),
-          'received': (data['received'] as List<dynamic>? ?? [])
-              .map((e) {
-                try {
-                  return Assessment.fromJson(e as Map<String, dynamic>);
-                } catch (parseErr) {
-                  debugPrint('Error parsing received assessment: $parseErr');
-                  return null;
-                }
-              })
-              .whereType<Assessment>()
-              .toList(),
-          'all_assessments': (data['all_assessments'] as List<dynamic>? ?? [])
-              .map((e) {
-                try {
-                  return Assessment.fromJson(e as Map<String, dynamic>);
-                } catch (parseErr) {
-                  debugPrint('Error parsing all_assessments: $parseErr');
-                  return null;
-                }
-              })
-              .whereType<Assessment>()
-              .toList(),
-          'average_percentage': avgParsed,
-        };
-      } catch (e) {
-        debugPrint('Records fetch error: $e');
-        return {
-          'given': <Assessment>[],
-          'received': <Assessment>[],
-          'all_assessments': <Assessment>[],
-          'average_percentage': null,
-        };
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}');
       }
-    }
 
-    debugPrint('Offline mode: returning empty records');
-    return {
-      'given': <Assessment>[],
-      'received': <Assessment>[],
-      'all_assessments': <Assessment>[],
-      'average_percentage': null,
-    };
+      final rawBody = response.body;
+      debugPrint('Raw API response body: $rawBody');
+
+      final data = jsonDecode(rawBody) as Map<String, dynamic>;
+      debugPrint('API response status: ${data['status']}');
+
+      if (data['status'] != 'success') {
+        debugPrint('API returned non-success: ${data['message']}');
+        throw Exception(data['message'] ?? 'API returned error');
+      }
+
+      final avgRaw = data['average_percentage'];
+      final avgParsed = avgRaw != null ? double.tryParse(avgRaw.toString()) : null;
+
+      return {
+        'given': (data['given'] as List<dynamic>? ?? [])
+            .map((e) => Assessment.fromJson(e as Map<String, dynamic>))
+            .whereType<Assessment>()
+            .toList(),
+        'received': (data['received'] as List<dynamic>? ?? [])
+            .map((e) => Assessment.fromJson(e as Map<String, dynamic>))
+            .whereType<Assessment>()
+            .toList(),
+        'all_assessments': (data['all_assessments'] as List<dynamic>? ?? [])
+            .map((e) => Assessment.fromJson(e as Map<String, dynamic>))
+            .whereType<Assessment>()
+            .toList(),
+        'average_percentage': avgParsed,
+      };
+    } catch (e) {
+      debugPrint('Records fetch error: $e');
+      return {
+        'given': <Assessment>[],
+        'received': <Assessment>[],
+        'all_assessments': <Assessment>[],
+        'average_percentage': null,
+      };
+    }
   }
+
+  debugPrint('Offline mode: returning empty records');
+  return {
+    'given': <Assessment>[],
+    'received': <Assessment>[],
+    'all_assessments': <Assessment>[],
+    'average_percentage': null,
+  };
+}
 
   // ──────────────────────────────────────────────
   // POST: Login

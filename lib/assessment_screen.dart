@@ -79,48 +79,50 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   }
 
   Future<void> _loadInitialData() async {
-    try {
+  try {
+    setState(() {
+      _isLoading = true;
+      _error = '';
+    });
+
+    final students = await ApiService.getStudents();
+    final criteria = await ApiService.getCriteria(
+      widget.subject.id,
+      type: 'assessment',           // ← added this
+    );
+
+    setState(() {
+      _students = students;
+      _filteredStudents = students;
+      _criteria = criteria;
+      _criteriaScores.clear();
+      for (var c in _criteria) {
+        _criteriaScores[c.id] = 0.0;
+      }
+      _isLoading = false;
+    });
+
+    await _autoSelectMe();
+  } catch (e) {
+    String errorMsg = e.toString();
+    if (errorMsg.contains('No internet') && errorMsg.contains('cached criteria')) {
       setState(() {
-        _isLoading = true;
         _error = '';
-      });
-
-      final students = await ApiService.getStudents();
-      final criteria = await ApiService.getCriteria(widget.subject.id);
-
-      setState(() {
-        _students = students;
-        _filteredStudents = students;
-        _criteria = criteria;
-        _criteriaScores.clear();
-        for (var c in _criteria) {
-          _criteriaScores[c.id] = 0.0;
-        }
         _isLoading = false;
       });
-
-      await _autoSelectMe();
-    } catch (e) {
-      String errorMsg = e.toString();
-      if (errorMsg.contains('No internet') && errorMsg.contains('cached criteria')) {
-        setState(() {
-          _error = '';
-          _isLoading = false;
-        });
-      } else if (errorMsg.contains('No internet') || _isOffline) {
-        setState(() {
-          _error = 'Offline Mode – Showing last saved criteria';
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _error = 'Failed to load data: $e';
-          _isLoading = false;
-        });
-      }
+    } else if (errorMsg.contains('No internet') || _isOffline) {
+      setState(() {
+        _error = 'Offline Mode – Showing last saved criteria';
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _error = 'Failed to load data: $e';
+        _isLoading = false;
+      });
     }
   }
-
+}
   Future<void> _autoSelectMe() async {
     if (_currentUserRollNo == null || _students.isEmpty) return;
 
