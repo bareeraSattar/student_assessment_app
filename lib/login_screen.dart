@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:e_app/api_service.dart'; // adjust path if needed
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'home_screen.dart'; // ← Added this import for direct navigation
 
 class LoginScreen extends StatefulWidget {
@@ -44,6 +46,9 @@ class _LoginScreenState extends State<LoginScreen> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('current_user', jsonEncode(userMap));
 
+        // Setup FCM token right after successful login (silent, non-blocking)
+        await _setupFcmTokenAfterLogin(userMap);
+
         if (mounted) {
           // Navigate to home (it will load user from prefs)
           Navigator.pushReplacement(
@@ -67,12 +72,75 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // FCM Token Setup – runs only after successful login
+  Future<void> _setupFcmTokenAfterLogin(Map<String, dynamic> user) async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+
+      // Request notification permission
+      NotificationSettings settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      print('FCM Permission status after login: ${settings.authorizationStatus}');
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional) {
+        String? token;
+
+        // Handle platform differences
+        if (Platform.isIOS) {
+          final apnsToken = await messaging.getAPNSToken();
+          print('APNs token (iOS): $apnsToken');
+          if (apnsToken == null) {
+            print('APNs token not ready on iOS – common on first run, retry after restart');
+            return;
+          }
+          token = await messaging.getToken();
+        } else {
+          token = await messaging.getToken();
+        }
+
+       // print('FCM Token after login: $token');
+
+        if (token != null && token.isNotEmpty) {
+          // Get user ID from response (adjust key if it's not 'id')
+          final userId = user['id'] ?? user['user_id'] ?? user['student_id'] ?? 0;
+
+          if (userId > 0) {
+            // Send token to backend via ApiService
+            final tokenResponse = await ApiService.saveToken(
+              userId: userId,
+              token: token,
+            );
+
+            if (tokenResponse['success'] == true) {
+              print('FCM token saved successfully for user $userId');
+            } else {
+              print('Failed to save FCM token: ${tokenResponse['message'] ?? 'unknown error'}');
+            }
+          } else {
+            print('No valid user ID found in login response');
+          }
+        } else {
+          print('Token is still null after permission grant');
+        }
+      } else {
+        print('Notification permission denied – user must enable in settings');
+      }
+    } catch (e) {
+      print('FCM setup error after login: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(), // dismiss keyboard on tap outside
+      onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Login'),

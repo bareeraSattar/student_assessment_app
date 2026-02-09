@@ -571,19 +571,30 @@ class _RecordsScreenState extends State<RecordsScreen> {
         if (criteriaMap.containsKey(key)) {
           final prev = criteriaMap[key]!;
           criteriaMap[key] = CriteriaScore(
+            criteriaId: 0,
             name: key,
             obtained: prev.obtained + c.obtained,
             max: prev.max + c.max,
           );
         } else {
-          criteriaMap[key] = c;
+          criteriaMap[key] = CriteriaScore(
+            criteriaId: c.criteriaId,
+            name: c.name,
+            obtained: c.obtained,
+            max: c.max,
+          );
         }
       }
     }
     var criteriaList = criteriaMap.values.toList();
     if (criteriaList.isEmpty && _averagePercentage != null) {
       criteriaList = [
-        CriteriaScore(name: 'Overall Performance', obtained: _averagePercentage!, max: 100),
+        CriteriaScore(
+          criteriaId: 0,
+          name: 'Overall Performance',
+          obtained: _averagePercentage!,
+          max: 100,
+        ),
       ];
     }
 
@@ -631,7 +642,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
                       style: const TextStyle(
                         fontSize: 52,
                         fontWeight: FontWeight.bold,
-                        color: Colors.blueAccent, // You can keep dynamic color if preferred
+                        color: Colors.blueAccent,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -799,7 +810,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
                                 bottomTitles: AxisTitles(
                                   sideTitles: SideTitles(
                                     showTitles: true,
-                                    reservedSize: 90, // increased to better fit long names
+                                    reservedSize: 90,
                                     getTitlesWidget: (value, meta) {
                                       final i = value.toInt();
                                       if (i < 0 || i >= criteriaList.length) return const Text('');

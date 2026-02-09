@@ -930,4 +930,107 @@ class ApiService {
     return {'success': false, 'message': 'Network error: $e'};
   }
 }
+  // ──────────────────────────────────────────────
+  // POST: Save FCM Token
+  // ──────────────────────────────────────────────
+  static Future<Map<String, dynamic>> saveToken({
+    required int userId,
+    required String token,
+  }) async {
+    final url = Uri.parse('$baseUrl/save_token.php');
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': userId,
+          'token': token.trim(),
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        
+        if (data['success'] == true || data['status'] == 'success') {
+          debugPrint('FCM token saved on server for user $userId');
+          return {'success': true, 'message': data['message'] ?? 'Token saved'};
+        } else {
+          debugPrint('Server rejected token save: ${data['message']}');
+          return {'success': false, 'message': data['message'] ?? 'Server error'};
+        }
+      } else {
+        debugPrint('saveToken HTTP error: ${response.statusCode} - ${response.body}');
+        return {'success': false, 'message': 'Server returned ${response.statusCode}'};
+      }
+    } catch (e) {
+      debugPrint('saveToken exception: $e');
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+    /// Load previous assessment for a specific student + subject + current user
+  /// Returns the existing assessment or null
+    /// Load previous assessment for a specific student + subject + current user
+  /// Returns the existing assessment or null if none found
+  static Future<Assessment?> getPreviousAssessmentForStudent({
+    required int subjectId,
+    required int studentId,
+  }) async {
+    final online = await _isOnline();
+    final rollNumber = await getCurrentUserRoll();
+
+    if (rollNumber.isEmpty) {
+      debugPrint('Cannot load previous assessment: no roll number found');
+      return null;
+    }
+
+    if (!online) {
+      debugPrint('Offline mode: skipping previous assessment load');
+      return null;
+    }
+
+    try {
+      final url = Uri.parse(
+        '$baseUrl/get_assessments.php?'
+        'subject_id=$subjectId&'
+        'student_id=$studentId&'
+        'user_roll_number=${Uri.encodeComponent(rollNumber)}&'
+        'type=assessment'
+      );
+
+      debugPrint('Fetching previous assessment: $url');
+
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      debugPrint('Previous assessment response status: ${response.statusCode}');
+
+      if (response.statusCode != 200) {
+        debugPrint('Bad response: ${response.body.substring(0, 200)}...');
+        return null;
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (data['status'] != 'success') {
+        debugPrint('API error: ${data['message'] ?? 'Unknown error'}');
+        return null;
+      }
+
+      if (data['has_existing'] != true || data['assessment'] == null) {
+        debugPrint('No existing assessment found for this student/subject/assessor');
+        return null;
+      }
+
+      final assessmentJson = data['assessment'] as Map<String, dynamic>;
+      final assessment = Assessment.fromJson(assessmentJson);
+
+      debugPrint('Successfully loaded previous assessment ID: ${assessment.id} '
+          'with ${assessment.criteriaScores.length} criteria scores');
+
+      return assessment;
+    } catch (e, stack) {
+      debugPrint('Error loading previous assessment: $e');
+      debugPrint('Stack trace: $stack');
+      return null;
+    }
+  }
 }

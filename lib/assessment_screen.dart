@@ -79,50 +79,51 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   }
 
   Future<void> _loadInitialData() async {
-  try {
-    setState(() {
-      _isLoading = true;
-      _error = '';
-    });
-
-    final students = await ApiService.getStudents();
-    final criteria = await ApiService.getCriteria(
-      widget.subject.id,
-      type: 'assessment',           // ← added this
-    );
-
-    setState(() {
-      _students = students;
-      _filteredStudents = students;
-      _criteria = criteria;
-      _criteriaScores.clear();
-      for (var c in _criteria) {
-        _criteriaScores[c.id] = 0.0;
-      }
-      _isLoading = false;
-    });
-
-    await _autoSelectMe();
-  } catch (e) {
-    String errorMsg = e.toString();
-    if (errorMsg.contains('No internet') && errorMsg.contains('cached criteria')) {
+    try {
       setState(() {
+        _isLoading = true;
         _error = '';
-        _isLoading = false;
       });
-    } else if (errorMsg.contains('No internet') || _isOffline) {
+
+      final students = await ApiService.getStudents();
+      final criteria = await ApiService.getCriteria(
+        widget.subject.id,
+        type: 'assessment',
+      );
+
       setState(() {
-        _error = 'Offline Mode – Showing last saved criteria';
+        _students = students;
+        _filteredStudents = students;
+        _criteria = criteria;
+        _criteriaScores.clear();
+        for (var c in _criteria) {
+          _criteriaScores[c.id] = 0.0;
+        }
         _isLoading = false;
       });
-    } else {
-      setState(() {
-        _error = 'Failed to load data: $e';
-        _isLoading = false;
-      });
+
+      await _autoSelectMe();
+    } catch (e) {
+      String errorMsg = e.toString();
+      if (errorMsg.contains('No internet') && errorMsg.contains('cached criteria')) {
+        setState(() {
+          _error = '';
+          _isLoading = false;
+        });
+      } else if (errorMsg.contains('No internet') || _isOffline) {
+        setState(() {
+          _error = 'Offline Mode – Showing last saved criteria';
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _error = 'Failed to load data: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
-}
+
   Future<void> _autoSelectMe() async {
     if (_currentUserRollNo == null || _students.isEmpty) return;
 
@@ -142,32 +143,59 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
 
   Future<void> _checkAndPreFill(int studentId) async {
     try {
-      final assessments = await ApiService.getAssessments(
+      final previous = await ApiService.getPreviousAssessmentForStudent(
         subjectId: widget.subject.id,
         studentId: studentId,
-        latestOnly: true,
       );
 
-      if (assessments.isNotEmpty) {
-        final assessment = assessments.first;
-        setState(() {
-          _existingAssessmentId = assessment.id;
+      setState(() {
+        if (previous != null && previous.criteriaScores.isNotEmpty) {
+          _existingAssessmentId = previous.id;
+
+          // Apply previous scores using criteriaId matching
           for (var c in _criteria) {
-            _criteriaScores[c.id] = 0.0;
+            final prevScore = previous.criteriaScores.firstWhere(
+              (s) => s.criteriaId == c.id,
+              orElse: () => CriteriaScore(
+                criteriaId: c.id,
+                name: c.name,
+                obtained: 0.0,
+                max: c.maxMarks,
+              ),
+            );
+
+            _criteriaScores[c.id] = prevScore.obtained;
           }
-        });
-      } else {
-        setState(() {
+
+          debugPrint('Pre-filled ${_criteriaScores.length} criteria from previous assessment #${previous.id}');
+          debugPrint('Pre-filled scores:');
+          _criteriaScores.forEach((id, value) {
+            debugPrint('  → Criteria ID $id: $value');
+          });
+        } else {
           _existingAssessmentId = null;
+
+          // Reset sliders to zero if no previous data
           for (var c in _criteria) {
             _criteriaScores[c.id] = 0.0;
           }
-        });
-      }
+
+          debugPrint('No previous assessment found or no scores → sliders reset to 0');
+        }
+      });
     } catch (e) {
-      if (!_isOffline) {
-        print('Pre-fill error: $e');
+      debugPrint('Failed to pre-fill previous scores: $e');
+      if (!_isOffline && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load previous marks: $e')),
+        );
       }
+      // Reset to zero on error
+      setState(() {
+        for (var c in _criteria) {
+          _criteriaScores[c.id] = 0.0;
+        }
+      });
     }
   }
 
@@ -345,6 +373,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                       ),
                       onTap: () {
                         setState(() => _selectedStudent = student);
+                        print('Selected student: ${student.name} (ID: ${student.id}, Roll: ${student.rollNo})');
                         _checkAndPreFill(student.id);
                         Navigator.pop(context);
                       },
@@ -462,100 +491,101 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   }
 
   Widget _buildCriteriaList() {
-    return Card(
-      elevation: Theme.of(context).brightness == Brightness.light ? 1.5 : 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Assessment Criteria',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 16),
-            ..._criteria.asMap().entries.map((entry) {
-              final idx = entry.key;
-              final criteriaItem = entry.value;
-              final score = _criteriaScores[criteriaItem.id] ?? 0.0;
-              final accent = _accentColors[idx % _accentColors.length];
+  return Card(
+    elevation: Theme.of(context).brightness == Brightness.light ? 1.5 : 3,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Assessment Criteria',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 16),
+          ..._criteria.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final criteriaItem = entry.value;
+            final score = _criteriaScores[criteriaItem.id] ?? 0.0;
+            final accent = _accentColors[idx % _accentColors.length];
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            criteriaItem.name,
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                          ),
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          criteriaItem.name,  // ← Criteria name restored
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
                         ),
-                        Text(
-                          'Max: ${criteriaItem.maxMarks.toStringAsFixed(1)}',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        thumbColor: accent,
-                        activeTrackColor: accent,
-                        inactiveTrackColor: accent.withOpacity(0.2),
-                        trackHeight: 8,
-                        overlayColor: accent.withOpacity(0.2),
-                        valueIndicatorColor: accent,
-                        valueIndicatorShape: const RectangularSliderValueIndicatorShape(),
-                        valueIndicatorTextStyle: const TextStyle(color: Colors.white),
-                        showValueIndicator: ShowValueIndicator.always,
                       ),
-                      child: Slider(
-                        value: score,
-                        min: 0,
-                        max: criteriaItem.maxMarks,
-                        divisions: (criteriaItem.maxMarks * 2).toInt(),
-                        label: score.toStringAsFixed(1),
-                        onChanged: (value) {
-                          setState(() {
-                            _criteriaScores[criteriaItem.id] = value;
-                          });
-                        },
+                      Text(
+                        'Max: ${criteriaItem.maxMarks.toStringAsFixed(1)}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      thumbColor: accent,                    // ← Color restored
+                      activeTrackColor: accent,              // ← Active color restored
+                      inactiveTrackColor: accent.withOpacity(0.2),
+                      trackHeight: 8,
+                      overlayColor: accent.withOpacity(0.2),
+                      valueIndicatorColor: accent,
+                      valueIndicatorShape: const RectangularSliderValueIndicatorShape(),
+                      valueIndicatorTextStyle: const TextStyle(color: Colors.white),
+                      showValueIndicator: ShowValueIndicator.always,
                     ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('0', style: Theme.of(context).textTheme.bodyMedium),
-                        Text(
-                          'Score: ${score.toStringAsFixed(1)}',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: accent,
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                        Text(
-                          criteriaItem.maxMarks.toStringAsFixed(1),
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                      ],
+                    child: Slider(
+                      key: Key('slider_${criteriaItem.id}_${score}'), // Forces rebuild when score changes
+                      value: score,
+                      min: 0,
+                      max: criteriaItem.maxMarks,
+                      divisions: (criteriaItem.maxMarks * 2).toInt(),
+                      label: score.toStringAsFixed(1),
+                      onChanged: (value) {
+                        setState(() {
+                          _criteriaScores[criteriaItem.id] = value;
+                        });
+                      },
                     ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('0', style: Theme.of(context).textTheme.bodyMedium),
+                      Text(
+                        'Score: ${score.toStringAsFixed(1)}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: accent,  // ← Score color restored
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      Text(
+                        criteriaItem.maxMarks.toStringAsFixed(1),
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildSummary() {
     final total = _calculateTotal();

@@ -1,47 +1,116 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io' show Platform;
+
+// Firebase + FCM
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+
+// Local notifications (tray icons + foreground display)
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'home_screen.dart';
 import 'login_screen.dart';
 import 'signup_screen.dart';
 
-// ────────────────────────────────────────────────────────────────
-// Storage helper (persistent user across restarts)
-// ────────────────────────────────────────────────────────────────
-class AuthStorage {
-  static const String _userKey = 'current_user';
+// Global plugin instance
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
 
-  static Future<void> saveUser(Map<String, dynamic> user) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_userKey, jsonEncode(user));
-  }
+// Background message handler (must be top-level)
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  print("Background message received: ${message.messageId}");
 
-  static Future<Map<String, dynamic>?> getSavedUser() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString(_userKey);
-    if (jsonString == null) return null;
-    try {
-      return jsonDecode(jsonString) as Map<String, dynamic>;
-    } catch (e) {
-      print('Error parsing saved user: $e');
-      return null;
-    }
-  }
+  // Show local notification in tray
+  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    'assessment_channel_id',
+    'Assessment Notifications',
+    channelDescription: 'Notifications for assessments and feedback',
+    importance: Importance.max,
+    priority: Priority.high,
+    showWhen: true,
+    playSound: true,
+  );
 
-  static Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_userKey);
-  }
+  const NotificationDetails details = NotificationDetails(android: androidDetails);
+
+  await flutterLocalNotificationsPlugin.show(
+    id: 0,
+    title: message.notification?.title ?? 'New Notification',
+    body: message.notification?.body ?? 'You have a new update',
+    notificationDetails: details,
+    payload: jsonEncode(message.data),
+  );
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Hive for future offline caching
+  // Initialize Firebase
+  await Firebase.initializeApp();
+
+  // Initialize local notifications
+  const AndroidInitializationSettings androidSettings =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  const InitializationSettings initSettings = InitializationSettings(
+    android: androidSettings,
+  );
+
+  // Corrected parameter name for recent versions (^17+)
+  await flutterLocalNotificationsPlugin.initialize(
+    settings: initSettings,   // ← changed from initializationSettings → settings
+    onDidReceiveNotificationResponse: (NotificationResponse response) {
+      print("Notification tapped - Payload: ${response.payload}");
+      // Add navigation logic here later if needed
+    },
+  );
+
+  // Set background message handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Foreground message handler (when app is open)
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    print("Foreground message received: ${message.messageId}");
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'assessment_channel_id',
+      'Assessment Notifications',
+      channelDescription: 'Notifications for assessments',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: true,
+      playSound: true,
+    );
+
+    const NotificationDetails details = NotificationDetails(android: androidDetails);
+
+    flutterLocalNotificationsPlugin.show(
+      id: 0,
+      title: message.notification?.title ?? 'New Assessment Update',
+      body: message.notification?.body ?? 'Check your records',
+      notificationDetails: details,
+      payload: jsonEncode(message.data),
+    );
+  });
+
+  // App opened from notification tap
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    print("App opened from notification tap: ${message.data}");
+    // Add navigation here (e.g. to RecordsScreen)
+  });
+
+  // Check initial notification (killed state)
+  RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+  if (initialMessage != null) {
+    print("Opened from killed state notification: ${initialMessage.data}");
+  }
+
+  // Initialize Hive
   final appDir = await getApplicationDocumentsDirectory();
   await Hive.initFlutter(appDir.path);
 
@@ -51,12 +120,23 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // Decide initial screen based on saved user
   Future<Widget> _getInitialScreen() async {
     final savedUser = await AuthStorage.getSavedUser();
 
+    // Request notification permission (non-blocking)
+    try {
+      final messaging = FirebaseMessaging.instance;
+      NotificationSettings settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      print('User notification permission status: ${settings.authorizationStatus}');
+    } catch (e) {
+      print("FCM permission request failed: $e");
+    }
+
     if (savedUser != null && savedUser.isNotEmpty) {
-      // Pass saved user to HomeScreen for offline display
       return HomeScreen(userData: savedUser);
     }
     return const LoginScreen();
@@ -68,7 +148,6 @@ class MyApp extends StatelessWidget {
       title: 'Student Assessment App',
       debugShowCheckedModeBanner: false,
 
-      // Your original light theme (unchanged)
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -128,7 +207,6 @@ class MyApp extends StatelessWidget {
         ),
       ),
 
-      // Dark theme (unchanged)
       darkTheme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -191,7 +269,6 @@ class MyApp extends StatelessWidget {
 
       themeMode: ThemeMode.system,
 
-      // Dynamic initial screen
       home: FutureBuilder<Widget>(
         future: _getInitialScreen(),
         builder: (context, snapshot) {
@@ -228,5 +305,32 @@ class MyApp extends StatelessWidget {
         '/home': (context) => const HomeScreen(),
       },
     );
+  }
+}
+
+// AuthStorage (unchanged)
+class AuthStorage {
+  static const String _userKey = 'current_user';
+
+  static Future<void> saveUser(Map<String, dynamic> user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_userKey, jsonEncode(user));
+  }
+
+  static Future<Map<String, dynamic>?> getSavedUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(_userKey);
+    if (jsonString == null) return null;
+    try {
+      return jsonDecode(jsonString) as Map<String, dynamic>;
+    } catch (e) {
+      print('Error parsing saved user: $e');
+      return null;
+    }
+  }
+
+  static Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_userKey);
   }
 }

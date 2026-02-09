@@ -1,6 +1,6 @@
 // lib/models.dart
 
-import 'package:flutter/foundation.dart'; // ← Already there for debugPrint
+import 'package:flutter/foundation.dart'; // for debugPrint
 
 class Student {
   final int id;
@@ -20,7 +20,7 @@ class Student {
   factory Student.fromJson(Map<String, dynamic> json) {
     return Student(
       id: int.tryParse(json['id']?.toString() ?? json['student_id']?.toString() ?? '0') ?? 0,
-      name: json['name']?.toString() ?? json['full_name']?.toString() ?? 'Unknown',
+      name: json['name']?.toString() ?? json['full_name']?.toString() ?? 'Unknown Student',
       rollNo: json['roll_no']?.toString() ?? json['roll_number']?.toString() ?? '',
       className: json['class_name']?.toString() ?? json['class']?.toString(),
       createdAt: json['created_at'] != null
@@ -119,7 +119,7 @@ class Criteria {
   final String name;
   final double maxMarks;
   final double? weightage;
-  final bool isPresentation;  // ← NEW: Added for presentation-specific criteria
+  final bool isPresentation;
 
   Criteria({
     required this.id,
@@ -127,7 +127,7 @@ class Criteria {
     required this.name,
     required this.maxMarks,
     this.weightage,
-    required this.isPresentation,  // ← NEW: Required in constructor
+    required this.isPresentation,
   });
 
   factory Criteria.fromJson(Map<String, dynamic> json) {
@@ -137,9 +137,9 @@ class Criteria {
       name: json['name']?.toString() ?? 'Unnamed Criteria',
       maxMarks: double.tryParse(json['max_marks']?.toString() ?? '0') ?? 0.0,
       weightage: json['weightage'] != null
-          ? double.tryParse(json['weightage']?.toString() ?? '0')
-          : null,
-      isPresentation: json['is_presentation'] == 1 ||  // ← NEW: Parse from backend (1 = true)
+          ? double.tryParse(json['weightage']?.toString() ?? '1.0')
+          : 1.0,
+      isPresentation: json['is_presentation'] == 1 ||
                       json['is_presentation'] == true ||
                       json['is_presentation'] == '1',
     );
@@ -152,40 +152,43 @@ class Criteria {
       'name': name,
       'max_marks': maxMarks,
       'weightage': weightage,
-      'is_presentation': isPresentation ? 1 : 0,  // ← NEW: Send as 1/0
+      'is_presentation': isPresentation ? 1 : 0,
     };
   }
 }
 
 // ────────────────────────────────────────────────
-// Helper class for criteria breakdown (used in Assessment)
+// Helper class for criteria scores (used in Assessment)
 // ────────────────────────────────────────────────
 class CriteriaScore {
+  final int criteriaId;
   final String name;
   final double obtained;
   final double max;
   final double percentage;
 
   CriteriaScore({
+    required this.criteriaId,
     required this.name,
     required this.obtained,
     required this.max,
-  }) : percentage = max > 0 ? (obtained / max) * 100 : 0;
+  }) : percentage = max > 0 ? (obtained / max) * 100 : 0.0;
 
   factory CriteriaScore.fromJson(Map<String, dynamic> json) {
-    // Super safe parsing
     final scoreStr = json['score']?.toString() ?? json['marks_awarded']?.toString() ?? '0';
-    final maxStr   = json['max_marks']?.toString() ?? json['max']?.toString() ?? '10.0';
+    final maxStr   = json['max_marks']?.toString() ?? json['max']?.toString() ?? '0';
 
     return CriteriaScore(
+      criteriaId: int.tryParse(json['criteria_id']?.toString() ?? '0') ?? 0,
       name: json['criteria_name']?.toString() ?? json['name']?.toString() ?? 'Unnamed',
       obtained: double.tryParse(scoreStr) ?? 0.0,
-      max:      double.tryParse(maxStr) ?? 10.0,
+      max: double.tryParse(maxStr) ?? 0.0,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
+      'criteria_id': criteriaId,
       'criteria_name': name,
       'score': obtained,
       'max_marks': max,
@@ -225,10 +228,23 @@ class Assessment {
   }) : criteriaScores = criteriaScores ?? [];
 
   factory Assessment.fromJson(Map<String, dynamic> json) {
-    // Safe parsing with toString()
     final totalStr  = json['total_marks']?.toString() ?? '0';
     final maxStr    = json['max_possible_marks']?.toString() ?? '0';
     final percStr   = json['percentage']?.toString() ?? '0';
+
+    final criteriaList = (json['criteria_scores'] as List<dynamic>? ?? []).map((e) {
+      try {
+        return CriteriaScore.fromJson(e as Map<String, dynamic>);
+      } catch (err) {
+        debugPrint('Failed to parse CriteriaScore: $err - raw: $e');
+        return CriteriaScore(
+          criteriaId: 0,
+          name: 'Parse Error',
+          obtained: 0.0,
+          max: 0.0,
+        );
+      }
+    }).toList();
 
     return Assessment(
       id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
@@ -241,18 +257,9 @@ class Assessment {
       percentage: double.tryParse(percStr) ?? 0.0,
       assessmentDate: json['assessment_date']?.toString() ?? DateTime.now().toIso8601String(),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ?? DateTime.now(),
-      assessorName: json['assessor_name']?.toString(),
+      assessorName: json['assessor_name']?.toString() ?? json['assessor_full_name']?.toString(),
       assessorId: int.tryParse(json['assessor_id']?.toString() ?? '0'),
-      criteriaScores: (json['criteria_scores'] as List<dynamic>? ?? [])
-          .map((e) {
-            try {
-              return CriteriaScore.fromJson(e as Map<String, dynamic>);
-            } catch (err) {
-              debugPrint('CriteriaScore parse failed: $err - raw item: $e');
-              return CriteriaScore(name: 'Parse Error', obtained: 0, max: 0);
-            }
-          })
-          .toList(),
+      criteriaScores: criteriaList,
     );
   }
 
